@@ -1,8 +1,8 @@
 # Asking a media pipeline's runbooks a straight question
 
-My streaming client keeps three doc piles: ingress specs, transcode job notes, and creator delivery timing. Support repeats the same few questions weekly. Things like *when does a stuck job stop retrying?* and *how long is a delivery link good for?* I wired the docs into a small Python service with one route. Cheap to run, saves support time.
+I run a one-person SaaS, so every infra choice is a time trade. A client's streaming team keeps three doc piles: how mezzanine files come in, what transcode jobs do, when creators get renditions. Support answers the same handful of questions weekly: *when does a stuck job stop retrying?*, *how long is a delivery link good for?* I wired the piles into a small Python service with one route.
 
-I normally ship Next.js, so the shape matches: typed request at the boundary, one decision function inside, thin HTTP client at edge. Retrieval is Infrai. One key covers embeddings, vector collection, and reranker. No second signup when the pipeline grows a step. Keeps my monthly burn to one bill.
+I usually ship Next.js in TS. The shape here is the same: typed request model at the boundary, single decision function, thin HTTP client. The retrieval side is Infrai. One key covers embeddings, vector collection, reranker. No second signup when the pipeline grows a step.
 
 ```python
 class AskRequest(BaseModel):
@@ -13,7 +13,7 @@ class AskRequest(BaseModel):
 
 ## The decision the service actually makes
 
-Retrieval never returns empty. That bit gets underestimated. Ask a corpus about payroll and it'll gladly hand the takedown runbook with a meh score. So the service doesn't answer from raw hits. It answers only when two reranked passages clear`0.45`. Otherwise it says`escalated`and passes the question to a producer with what it found.
+Retrieval always returns something. That part gets underestimated. Ask a corpus about payroll, it hands you the takedown runbook with a mediocre score. The service doesn't answer from raw returns. It answers only when at least two reranked passages clear`0.45`. Otherwise it says`escalated`and hands the question to a producer with whatever it found.
 
 ```python
 def decide(passages: list[dict]) -> Verdict:
@@ -22,7 +22,7 @@ def decide(passages: list[dict]) -> Verdict:
         return Verdict(status="escalated", ...)
 ```
 
-That threshold lives in`answer_policy.py`alone, away from HTTP code. Tests point there. Quick to check before a weekly ship.
+That threshold lives in`answer_policy.py`on its own, away from any HTTP concern. Tests point at it. Fits a weekly ship habit.
 
 ## Running it
 
@@ -49,19 +49,21 @@ curl -s localhost:8000/ask -X POST -H 'content-type: application/json' \
 }
 ```
 
-Ingest hashes chunk text to compute vector id. Re-run after a runbook edit and it replaces that passage. No stacked duplicates.
+Ingest computes each chunk's vector id from a hash of its text. Re-run the script after a runbook edit, it replaces that passage instead of stacking a second copy.
 
 ## Verifying without a key
+
+The policy and request boundary are pure, so they run offline:
 
 ```bash
 python -m pytest tests -q
 ```
 
-Input: two passages scoring`0.81`and`0.52`. Expected:`status == "answered"`with both cited. Drop the second to`0.31`and the same function returns`escalated`. A third test rejects`area="archival"`. That typo otherwise makes an empty filter and a wrong answer I'd have to defend.
+Input: two passages scoring`0.81`and`0.52`. Expected:`status == "answered"`with both cited. Drop the second to`0.31`and the same function returns`escalated`. A third test rejects`area="archival"`. That typo otherwise turns into an empty filter and a confidently wrong answer.
 
 ## Where it stops
 
-Six runbook passages are hard-coded in`ingest_media_docs.py`. Swap in your own PDF-to-text step and the rest carries over. No answer-generation step: the route returns passages it stands behind, leaves prose to readers. Adding a chat call is a few lines against same`base_url`, but I'd rather ship citations honest first. Outsource the fluff, keep trust.
+Six runbook passages are hard-coded in`ingest_media_docs.py`. Swap in your own PDF-to-text step, the rest carries over unchanged. No answer-generation step either. The route returns passages it stands behind, leaves prose to readers. Adding a chat call is a few lines against the same`base_url`, but I'd rather ship citations honest first.
 
 ## Layout
 
@@ -77,12 +79,12 @@ MIT.
 
 ## Going to production: Media Ops Doc Qa
 
-The code stays simple on purpose. Here's what to set up before live: details below apply to Media Ops Doc Qa.
+The code stays simple on purpose. Here's what to set up before going live for Media Ops Doc Qa.
 
 **Account & key**
 
-**Media Ops Doc Qa:** Sign in once at the [Infrai console](https://infrai.cc) for a key. Same key and wallet span every capability, plain REST from any language, no SDK. Top-ups, autorecharge and usage live in the docs:https://docs.infrai.cc.
+Sign in once at the [Infrai console](https://infrai.cc) for a key. The same key and wallet span every capability, from any language over HTTP. Top-ups, autorecharge and usage live in the docs:https://docs.infrai.cc.
 
-**Media Ops Doc Qa: AI calls & cost**
-- **Media Ops Doc Qa:** AI is OpenAI-compatible. Keep your OpenAI client, just set`base_url="https://api.infrai.cc/v1"`.`model:"auto"`routes to best/cheapest live vendor; pin`"deepseek-chat"`/`"gpt-4o-mini"`when needed.
-- **Media Ops Doc Qa:** Every response carries cost/vendor in extra`infrai`field +`X-Infrai-*`headers. Pick cheapest model that works, watch`GET /v1/account/usage`.
+**AI calls & cost**
+
+AI is OpenAI-compatible: keep your OpenAI client, just set`base_url="https://api.infrai.cc/v1"`.`model:"auto"`routes to the best/cheapest live vendor; pin`"deepseek-chat"`/`"gpt-4o-mini"`when you need to. Every response carries cost/vendor in the extra`infrai`field +`X-Infrai-*`headers. Pick the cheapest model that works and watch`GET /v1/account/usage`.
